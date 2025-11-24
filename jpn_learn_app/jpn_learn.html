@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <link rel="manifest" href="./jpn_learn_manifest.json">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>日語學習助手 (50音 + 句子解析)</title>
+    <script>
+        if ('serviceWorker' in navigator) {
+          // 跟瀏覽器「預約」了一件事：「等一下全部載入完畢後，請叫我一聲。」
+          window.addEventListener('load', () => {
+            // 真正執行註冊的時刻，已經是很久以後了
+            navigator.serviceWorker.register('./jpn_learn_sw.js');
+            console.log('SW 註冊啟動');
+          });
+        }
+    </script>
+    <style>
+        /* =========================================
+           1. 全域變數與重置
+           ========================================= */
+        :root {
+            --primary: #2196F3;
+            --primary-kana: #ff7eb3;
+            --bg: #f5f7fa;
+            --header-bg: #ffffff;
+            --text-main: #2c3e50;
+        }
+
+        * { box-sizing: border-box; }
+        
+        body {
+            font-family: "Microsoft JhengHei", "Helvetica Neue", sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* =========================================
+           2. App Shell (Header & Nav)
+           ========================================= */
+        header.app-header {
+            background: var(--header-bg);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            padding: 10px 20px;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .app-title { font-size: 1.2rem; font-weight: bold; color: #333; display: flex; align-items: center; gap: 8px;}
+        
+        /* 全域控制區 */
+        .global-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 0.9rem;
+            background: #f0f2f5;
+            padding: 5px 15px;
+            border-radius: 20px;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background 0.2s;
+            user-select: none;
+        }
+        .status-pill:hover { background: #e0e0e0; }
+        
+        /* 狀態燈號 */
+        .status-indicator { 
+            width: 10px; height: 10px; border-radius: 50%; 
+            background: #ccc; 
+            box-shadow: 0 0 2px rgba(0,0,0,0.2);
+            display: none; /* 預設隱藏 */
+        }
+        .status-indicator.visible { display: inline-block; }
+        
+        .status-green { background: #4CAF50; box-shadow: 0 0 6px #4CAF50; }
+        .status-orange { background: #ff9800; box-shadow: 0 0 6px #ff9800; }
+        
+        .status-icon { font-size: 1.1rem; }
+        .status-text { font-size: 0.85rem; font-weight: bold; color: #555; }
+
+        .speed-control { display: flex; align-items: center; gap: 5px; margin-left: 10px; border-left: 1px solid #ccc; padding-left: 10px;}
+        input[type=range] { width: 80px; cursor: pointer; }
+
+        /* 導航頁籤 (Tabs) */
+        .nav-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: none;
+            font-size: 1rem;
+            color: #777;
+            cursor: pointer;
+            position: relative;
+            font-weight: bold;
+        }
+
+        .tab-btn.active { color: var(--primary); }
+        .tab-btn.active::after {
+            content: ''; position: absolute; bottom: -1px; left: 0; width: 100%; height: 3px; background: var(--primary);
+        }
+        
+        .tab-btn[data-target="view-kana"].active { color: var(--primary-kana); }
+        .tab-btn[data-target="view-kana"].active::after { background: var(--primary-kana); }
+
+        /* =========================================
+           3. View Containers
+           ========================================= */
+        main { flex: 1; padding: 20px; width: 100%; max-width: 1000px; margin: 0 auto; }
+        .view-section { display: none; animation: fadeIn 0.3s ease; }
+        .view-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* =========================================
+           4. View A: 50音
+           ========================================= */
+        .kana-controls { text-align: center; margin-bottom: 20px; }
+        .kana-toggle-btn {
+            padding: 6px 16px; border: 2px solid var(--primary-kana); background: white; color: var(--primary-kana);
+            border-radius: 20px; cursor: pointer; font-weight: bold; margin: 0 5px; transition: 0.2s;
+        }
+        .kana-toggle-btn.active { background: var(--primary-kana); color: white; }
+
+        .grid-container {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); 
+            gap: 10px; max-width: 600px; margin: 0 auto;
+        }
+        @media(min-width: 500px) { .grid-container { grid-template-columns: repeat(5, 1fr); } }
+
+        .char-card {
+            background: white; border-radius: 10px; aspect-ratio: 1;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); cursor: pointer; transition: transform 0.2s;
+            border: 1px solid transparent;
+        }
+        .char-card:hover { transform: translateY(-3px); border-color: var(--primary-kana); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .char-main { font-size: 1.8rem; font-weight: bold; color: #333; }
+        .char-sub { font-size: 0.8rem; color: #999; }
+        .empty-cell { visibility: hidden; pointer-events: none; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(2px);
+            display: flex; justify-content: center; align-items: center;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 2000;
+        }
+        .modal-overlay.open { opacity: 1; pointer-events: auto; }
+        .modal-content {
+            background: white; padding: 25px; border-radius: 16px; width: 90%; max-width: 320px;
+            text-align: center; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .close-btn { position: absolute; top: 10px; right: 15px; font-size: 1.8rem; cursor: pointer; color: #aaa; }
+        
+        /* 筆順容器 */
+        .stroke-container {
+            width: 150px; height: 150px; background: #fff; border: 2px dashed #eee;
+            border-radius: 8px; margin: 15px auto; position: relative; display: flex; align-items: center; justify-content: center;
+        }
+        .stroke-img { max-width: 100%; max-height: 100%; object-fit: contain; z-index: 2; display: none; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid var(--primary-kana); border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; position: absolute;}
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* 錯誤訊息：確保預設隱藏 */
+        #img-error { display: none; font-size: 0.8rem; color: #999; }
+
+        .play-btn-kana {
+            background: var(--primary-kana); color: white; border: none; padding: 10px 30px;
+            border-radius: 25px; font-size: 1rem; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+            box-shadow: 0 4px 10px rgba(255, 126, 179, 0.3); margin-top: 10px;
+        }
+        .play-btn-kana:hover { opacity: 0.9; }
+        .mnemonic { margin-top: 15px; font-size: 0.9rem; color: #555; background: #fff5f8; padding: 10px; border-radius: 6px; text-align: left; border-left: 3px solid var(--primary-kana); }
+
+        /* =========================================
+           5. View B: 句子解析
+           ========================================= */
+        .sentence-input-area { width: 100%; height: 100px; font-size: 16px; padding: 12px; border: 2px solid #ddd; border-radius: 8px; margin-bottom: 15px; resize: vertical; }
+        .btn-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+        .action-btn {
+            padding: 8px 16px; font-size: 14px; cursor: pointer; color: white; border: none; border-radius: 5px; 
+            display: flex; align-items: center; gap: 6px; transition: opacity 0.2s;
+        }
+        .action-btn:hover { opacity: 0.9; }
+        .action-btn:disabled { background-color: #ccc !important; cursor: not-allowed; }
+        .btn-blue { background-color: #2196F3; } 
+        .btn-green { background-color: #4CAF50; } 
+        .btn-orange { background-color: #ff9800; } 
+        .btn-red { background-color: #f44336; }
+
+        #sentence-result { display: flex; flex-wrap: wrap; align-items: flex-end; row-gap: 24px; min-height: 100px;}
+        .token { 
+            font-size: 24px; color: #333; border-bottom: 2px solid #ddd; margin-right: 12px; padding: 2px 4px; 
+            border-radius: 4px; cursor: pointer; position: relative; transition: all 0.2s; 
+        }
+        .token:hover { background-color: #e3f2fd; border-bottom-color: #2196F3; }
+        .token.speaking { background-color: #E91E63 !important; color: white !important; border-bottom-color: #880E4F !important; transform: scale(1.1); z-index: 5; }
+        .token.speaking rt { color: white; opacity: 1; }
+        .speaker-icon { 
+            display: none; position: absolute; top: -20px; right: -5px; font-size: 12px; 
+            background-color: white; color: #333; border: 1px solid #ccc; border-radius: 50%; 
+            width: 20px; height: 20px; text-align: center; line-height: 20px; z-index: 10; 
+        }
+        .token:hover .speaker-icon { display: block; }
+        .token[data-pos="記号"] { border-bottom: none; cursor: default; }
+        .token[data-pos="記号"]:hover { background: none; }
+        .token[data-pos="記号"] .speaker-icon { display: none !important; }
+        
+        rt { font-size: 12px; color: #d32f2f; opacity: 0; transition: opacity 0.3s; user-select: none; }
+        .token:hover rt, .token.active rt { opacity: 1; }
+        
+        .sys-msg { font-size: 13px; color: #666; margin-top: 5px; font-style: italic;}
+
+        @media (max-width: 600px) {
+            .header-top { flex-direction: column; gap: 10px; align-items: flex-start; }
+            .global-controls { width: 100%; justify-content: space-between; }
+        }
+    </style>
+</head>
+<body>
+
+    <header class="app-header">
+        <div class="header-top">
+            <div class="app-title">🇯🇵 日語學習助手</div>
+            
+            <div class="global-controls">
+                <div class="status-pill" onclick="AudioManager.toggleEngineMode()" title="點擊切換本地/遠端發音">
+                    <span id="global-mode-icon" class="status-icon">💻</span>
+                    
+                    <span id="global-mode-text" class="status-text">偵測中...</span>
+                    
+                    <div id="global-status-indicator" class="status-indicator"></div>
+                </div>
+                
+                <div class="speed-control">
+                    <span>🐢</span>
+                    <input type="range" id="global-speed" min="0.5" max="2.0" step="0.1" value="1.0" oninput="document.getElementById('spd-val').innerText = this.value + 'x'">
+                    <span style="font-size:12px; width:25px;" id="spd-val">1.0x</span>
+                </div>
+            </div>
+        </div>
+
+        <nav class="nav-tabs">
+            <button class="tab-btn active" data-target="view-kana" onclick="switchTab('view-kana')">50音練習</button>
+            <button class="tab-btn" data-target="view-sentence" onclick="switchTab('view-sentence')">句子解析</button>
+        </nav>
+    </header>
+
+    <main>
+        <section id="view-kana" class="view-section active">
+            <div class="kana-controls">
+                <button class="kana-toggle-btn active" id="btn-mode-hira" onclick="KanaApp.setMode('hira')">平假名</button>
+                <button class="kana-toggle-btn" id="btn-mode-kata" onclick="KanaApp.setMode('kata')">片假名</button>
+            </div>
+            
+            <div class="grid-container" id="kana-grid"></div>
+            
+            <div class="modal-overlay" id="kana-modal" onclick="KanaApp.closeModal(event)">
+                <div class="modal-content" onclick="event.stopPropagation()">
+                    <span class="close-btn" onclick="KanaApp.closeModal()">&times;</span>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <div style="font-size: 3.5rem; color: var(--primary-kana); line-height: 1.2;" id="m-char"></div>
+                        <div style="font-size: 1.2rem; font-weight: bold; color: #333;" id="m-romaji"></div>
+                    </div>
+                    
+                    <div class="stroke-container">
+                        <div class="loader" id="img-loader"></div>
+                        <img id="stroke-img" class="stroke-img" alt="筆順" onload="KanaApp.onImgLoad()" onerror="KanaApp.onImgError()">
+                        <div id="img-error">無影像</div>
+                    </div>
+
+                    <button class="play-btn-kana" onclick="KanaApp.playCurrentChar()">
+                        🔊 聽發音
+                    </button>
+
+                    <div class="mnemonic" id="m-note"></div>
+                </div>
+            </div>
+            <div style="text-align: center; margin-top: 30px; font-size: 12px; color: #ccc;">影像來源: Wikimedia Commons</div>
+        </section>
+
+        <section id="view-sentence" class="view-section">
+            <textarea id="input-text" class="sentence-input-area" placeholder="請輸入日文句子...">今日の天気はとてもいいですね。</textarea>
+            
+            <div class="btn-toolbar">
+                <button onclick="SentenceApp.tokenize()" class="action-btn btn-blue" id="btn-parse" disabled><span>🔍</span> 解析</button>
+                <button onclick="SentenceApp.playFull()" class="action-btn btn-green"><span>🔊</span> 整句</button>
+                <button onclick="SentenceApp.playSeq()" class="action-btn btn-orange" id="btn-seq" disabled><span>▶️</span> 逐詞</button>
+                <button onclick="AudioManager.stopAll()" class="action-btn btn-red" id="btn-stop" disabled><span>⏹</span> 停止</button>
+            </div>
+
+            <div id="dic-status" class="sys-msg">正在準備字典...</div>
+            <div id="sentence-result"></div>
+        </section>
+    </main>
+
+    <audio id="tts-player"></audio>
+    <script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
+
+    <script>
+        /**
+         * =========================================================================
+         * 1. AudioManager (核心朗讀服務)
+         * =========================================================================
+         */
+        const AudioManager = {
+            // 指向使用者本機的 Proxy
+            PROXY_URL: "http://localhost:3000/tts",
+			PROXY_CHECK_URL: "http://localhost:3000/ready",
+            
+            isProxyAvailable: false,
+            // 預設先設為 false，等待偵測結果決定，避免 UI 亂跳
+            isRemoteMode: false,
+            localVoice: null,
+            audioPlayer: document.getElementById('tts-player'),
+            currentPlayId: 0,
+            
+            // 🔥 新增：語音偵測的逾時鎖定，避免重複切換
+            voiceCheckTimeout: null,
+
+            ui: {
+                indicator: document.getElementById('global-status-indicator'),
+                icon: document.getElementById('global-mode-icon'),
+                text: document.getElementById('global-mode-text'),
+                speed: document.getElementById('global-speed'),
+                stopBtn: document.getElementById('btn-stop')
+            },
+
+            cache: {
+                dbName: "JP_TTS_Cache", storeName: "audio_files", dbVersion: 1, maxSize: 200,
+                async open() {
+                    return new Promise((resolve, reject) => {
+                        const r = indexedDB.open(this.dbName, this.dbVersion);
+                        r.onupgradeneeded = (e) => {
+                            const db = e.target.result;
+                            if(!db.objectStoreNames.contains(this.storeName)) {
+                                db.createObjectStore(this.storeName, { keyPath: "text" }).createIndex("timestamp", "timestamp");
+                            }
+                        };
+                        r.onsuccess = (e) => resolve(e.target.result);
+                        r.onerror = (e) => reject(e);
+                    });
+                },
+                async get(text) {
+                    try {
+                        const db = await this.open();
+                        return new Promise(r => {
+                            const req = db.transaction(this.storeName, "readwrite").objectStore(this.storeName).get(text);
+                            req.onsuccess = () => {
+                                if(req.result) {
+                                    req.result.timestamp = Date.now();
+                                    db.transaction(this.storeName, "readwrite").objectStore(this.storeName).put(req.result);
+                                    r(req.result.blob);
+                                } else r(null);
+                            };
+                            req.onerror = () => r(null);
+                        });
+                    } catch { return null; }
+                },
+                async put(text, blob) {
+                    try {
+                        const db = await this.open();
+                        const store = db.transaction(this.storeName, "readwrite").objectStore(this.storeName);
+                        store.put({ text, blob, timestamp: Date.now() });
+                    } catch {}
+                }
+            },
+
+            init() {
+                // 1. 偵測 Proxy (延遲執行)
+                setTimeout(() => this.checkProxy(), 800);
+
+                // 2. 偵測本地語音 (Web Speech API)
+                // 註冊事件監聽器：當 Android 語音包載入完成時觸發
+                if (window.speechSynthesis.onvoiceschanged !== undefined) {
+                    window.speechSynthesis.onvoiceschanged = () => this.detectLocalVoice(false);
+                }
+                
+                // 立即嘗試一次 (針對 PC)
+                this.detectLocalVoice(false);
+
+                // 🔥 3. 設定「最後通牒」逾時機制 (針對 Android)
+                // 如果 2.5 秒後 onvoiceschanged 還沒觸發，或者清單還是空的，就強制判定。
+                this.voiceCheckTimeout = setTimeout(() => {
+                    this.detectLocalVoice(true);
+                }, 2500);
+            },
+
+            async checkProxy() {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 1500);
+                    const res = await fetch(`${this.PROXY_CHECK_URL}`, { method: 'GET', signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    
+                    if (res.ok) {
+                        this.isProxyAvailable = true;
+                    } else {
+                        this.isProxyAvailable = false;
+                    }
+                } catch (e) {
+                    this.isProxyAvailable = false; 
+                }
+                this.updateUI();
+            },
+
+            // 🔥 修正後的語音偵測邏輯
+            // forceDecision: 是否為逾時強制判定
+            detectLocalVoice(forceDecision) {
+                const voices = window.speechSynthesis.getVoices();
+                
+                // 情況 A: 瀏覽器還在載入語音 (陣列為空)，且還沒到逾時時間 -> 繼續等待，不切換
+                if (voices.length === 0 && !forceDecision) {
+                    // 保持現狀 (UI 顯示偵測中...)
+                    return;
+                }
+
+                // 情況 B: 語音清單已載入 OR 已經逾時 (必須做決定了)
+                
+                // 尋找日文語音
+                const jaVoice = voices.find(v => v.lang === 'ja-JP') || voices.find(v => v.lang.startsWith('ja'));
+                
+                if (jaVoice) {
+                    // ✅ 找到了！使用本地語音
+                    this.localVoice = jaVoice;
+                    this.isRemoteMode = false;
+                    
+                    // 如果這是在逾時之前發生的，記得清除逾時計時器，避免稍後重複執行
+                    if (this.voiceCheckTimeout) {
+                        clearTimeout(this.voiceCheckTimeout);
+                        this.voiceCheckTimeout = null;
+                    }
+                } else {
+                    // ❌ 找不到 (是真的沒安裝，或是逾時了還沒載入) -> 切換遠端
+                    this.localVoice = null;
+                    this.isRemoteMode = true;
+                }
+
+                this.updateUI();
+            },
+
+            toggleEngineMode() {
+                this.isRemoteMode = !this.isRemoteMode;
+                this.updateUI();
+            },
+
+            updateUI() {
+                this.ui.indicator.className = 'status-indicator'; 
+                
+                if (this.isRemoteMode) {
+                    this.ui.icon.textContent = '☁️';
+                    this.ui.indicator.classList.add('visible'); 
+                    
+                    if (this.isProxyAvailable) {
+                        this.ui.text.innerHTML = `遠端 (Google)`;
+                    } else {
+                        this.ui.text.innerHTML = `遠端 (Google) <small style="opacity:0.7">無快取</small>`;
+                    }
+                } else {
+                    this.ui.icon.textContent = '💻';
+                    this.ui.indicator.classList.remove('visible'); 
+                    if (this.localVoice) {
+                        this.ui.text.innerHTML = `本地 (${this.localVoice.name.substring(0, 10)}...)`;
+                    } else {
+                        this.ui.text.innerHTML = `本地 (預設)`;
+                    }
+                }
+            },
+
+            setLight(color) { 
+                if (!this.isRemoteMode) return;
+                this.ui.indicator.className = 'status-indicator visible';
+                if(color === 'green') this.ui.indicator.classList.add('status-green');
+                else if(color === 'orange') this.ui.indicator.classList.add('status-orange');
+            },
+
+            stopAll() {
+                this.currentPlayId++; 
+                if(this.ui.stopBtn) this.ui.stopBtn.disabled = true;
+                
+                this.audioPlayer.oncanplay = null;
+                this.audioPlayer.onended = null;
+                this.audioPlayer.onerror = null;
+
+                this.audioPlayer.pause();
+                try { this.audioPlayer.currentTime = 0; } catch(e) {}
+                
+                window.speechSynthesis.cancel();
+                this.setLight('gray');
+                
+                if (typeof SentenceApp !== 'undefined') {
+                    SentenceApp.stopSequenceUI();
+                }
+            },
+
+            play(text, onComplete) {
+                const myRequestId = ++this.currentPlayId;
+                const speed = parseFloat(this.ui.speed.value);
+                
+                if (!this.isRemoteMode) {
+                    window.speechSynthesis.cancel();
+                    const utter = new SpeechSynthesisUtterance(text);
+                    utter.lang = 'ja-JP';
+                    if (this.localVoice) utter.voice = this.localVoice;
+                    utter.rate = speed;
+                    utter.onend = () => { 
+                        if(this.currentPlayId === myRequestId && onComplete) onComplete(); 
+                    };
+                    utter.onerror = (e) => { 
+                        console.error(e); 
+                        if(this.currentPlayId === myRequestId && onComplete) onComplete(); 
+                    };
+                    window.speechSynthesis.speak(utter);
+                } else {
+                    this.playRemote(text, speed, onComplete, myRequestId);
+                }
+            },
+
+            async playRemote(text, speed, onComplete, requestId) {
+                if (requestId !== this.currentPlayId) return;
+
+                const doPlay = (url) => {
+                    if (requestId !== this.currentPlayId) return;
+                    this.audioPlayer.src = url;
+
+                    this.audioPlayer.oncanplay = () => {
+                        if (requestId !== this.currentPlayId) return;
+                        this.audioPlayer.playbackRate = speed;
+                        this.audioPlayer.play().catch(() => {
+                            if (requestId === this.currentPlayId) {
+                                this.setLight('gray'); if(onComplete) onComplete();
+                            }
+                        });
+                    };
+                    this.audioPlayer.onended = () => {
+                        if (requestId !== this.currentPlayId) return;
+                        this.setLight('gray'); if(onComplete) onComplete();
+                    };
+                    this.audioPlayer.onerror = () => {
+                        if (requestId !== this.currentPlayId) return;
+                        this.setLight('gray'); if(onComplete) onComplete();
+                    };
+                };
+
+                const cachedBlob = await this.cache.get(text);
+                if (requestId !== this.currentPlayId) return;
+
+                if (cachedBlob) {
+                    this.setLight('green');
+                    doPlay(URL.createObjectURL(cachedBlob));
+                    return;
+                }
+
+                this.setLight('orange');
+                if (this.isProxyAvailable) {
+                    try {
+                        const res = await fetch(`${this.PROXY_URL}?q=${encodeURIComponent(text)}`);
+                        if (requestId !== this.currentPlayId) return;
+                        if (!res.ok) throw new Error();
+                        const blob = await res.blob();
+                        this.cache.put(text, blob);
+                        doPlay(URL.createObjectURL(blob));
+                        return;
+                    } catch (e) {}
+                }
+
+                if (requestId !== this.currentPlayId) return;
+                const directUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(text)}&t=${Date.now()}`;
+                doPlay(directUrl);
+            }
+        };
+
+        /**
+         * =========================================================================
+         * 2. KanaApp (50音邏輯)
+         * =========================================================================
+         */
+        const KanaApp = {
+            data: [
+                { r: 'a', h: 'あ', k: 'ア', note: '「あ」長得像「安」全的安。' }, { r: 'i', h: 'い', k: 'イ', note: '「い」像漢字「以」的左邊。' }, { r: 'u', h: 'う', k: 'ウ', note: '「う」上面一點，像注音「ㄅ」上面加一點。' }, { r: 'e', h: 'え', k: 'エ', note: '「え」像漢字「元」的草寫。' }, { r: 'o', h: 'お', k: 'オ', note: '「お」像在打高爾夫球的姿勢。' },
+                { r: 'ka', h: 'か', k: 'カ', note: '「か」就是「加」油的加。' }, { r: 'ki', h: 'き', k: 'キ', note: '「ki」像吉他的琴頸。' }, { r: 'ku', h: 'く', k: 'ク', note: '「ku」像鳥的嘴巴 (Cuckoo)。' }, { r: 'ke', h: 'け', k: 'ケ', note: '「ke」像漢字「計」的左邊。' }, { r: 'ko', h: 'こ', k: 'コ', note: '「こ」是兩條線，像「己」。' },
+                { r: 'sa', h: 'さ', k: 'サ', note: '「さ」像殺氣的「殺」草寫。' }, { r: 'shi', h: 'し', k: 'シ', note: '「し」像吸管的形狀。' }, { r: 'su', h: 'す', k: 'ス', note: '「su」裡面有個圈圈，像盪鞦韆。' }, { r: 'se', h: 'せ', k: 'セ', note: '「se」像世界的「世」。' }, { r: 'so', h: 'そ', k: 'ソ', note: '「so」像Z上面加一點。' },
+                { r: 'ta', h: 'た', k: 'タ', note: '「ta」像漢字「太」。' }, { r: 'chi', h: 'ち', k: 'チ', note: '「chi」像數字「5」，也像七。' }, { r: 'tsu', h: 'つ', k: 'ツ', note: '「tsu」像刺蝟的刺，或是海嘯 (Tsunami)。' }, { r: 'te', h: 'て', k: 'テ', note: '「te」像展開的手。' }, { r: 'to', h: 'と', k: 'ト', note: '「to」像兔子的耳朵。' },
+                { r: 'na', h: 'な', k: 'ナ', note: '「na」像「奈」良的奈。' }, { r: 'ni', h: 'に', k: 'ニ', note: '「ni」就是漢字「二」加上一豎。' }, { r: 'nu', h: 'ぬ', k: 'ヌ', note: '「nu」像奴隸的「奴」。' }, { r: 'ne', h: 'ね', k: 'ネ', note: '「ne」結尾有個圈，像貓的尾巴 (Neko)。' }, { r: 'no', h: 'の', k: 'ノ', note: '「no」就像禁止標誌。' },
+                { r: 'ha', h: 'は', k: 'ハ', note: '「ha」像哈氣的動作。' }, { r: 'hi', h: 'ひ', k: 'ヒ', note: '「hi」像一個人在笑嘻嘻的嘴型。' }, { r: 'fu', h: 'ふ', k: 'フ', note: '「fu」像富士山。' }, { r: 'he', h: 'へ', k: 'ヘ', note: '「he」就是指著遠方 (Hey!)。' }, { r: 'ho', h: 'ほ', k: 'ホ', note: '「ho」像保護的「保」。' },
+                { r: 'ma', h: 'ま', k: 'マ', note: '「ma」像媽媽抱小孩。' }, { r: 'mi', h: 'み', k: 'ミ', note: '「mi」像美妙的「美」下面。' }, { r: 'mu', h: 'む', k: 'ム', note: '「mu」像牛在叫 Moo~。' }, { r: 'me', h: 'め', k: 'メ', note: '「me」像麵條的「麵」女字邊。' }, { r: 'mo', h: 'も', k: 'モ', note: '「mo」像毛毛蟲的「毛」。' },
+                { r: 'ya', h: 'や', k: 'ヤ', note: '「ya」像鴨子的鴨。' }, { empty: true }, { r: 'yu', h: 'ゆ', k: 'ユ', note: '「yu」像由來的「由」草寫。' }, { empty: true }, { r: 'yo', h: 'よ', k: 'ヨ', note: '「yo」像玩溜溜球 Yo-Yo。' },
+                { r: 'ra', h: 'ら', k: 'ラ', note: '「ra」像馬桶蓋 (Lavatory)。' }, { r: 'ri', h: 'り', k: 'リ', note: '「ri」像利益的「利」右邊。' }, { r: 'ru', h: 'る', k: 'ル', note: '「ru」尾巴有圈圈 (Loop)。' }, { r: 're', h: 'れ', k: 'レ', note: '「re」像禮貌的「禮」右邊。' }, { r: 'ro', h: 'ろ', k: 'ロ', note: '「ro」像「る」但沒有圈圈。' },
+                { r: 'wa', h: 'わ', k: 'ワ', note: '「wa」像哇哇大哭的樣子。' }, { empty: true }, { empty: true }, { empty: true }, { r: 'wo', h: 'を', k: 'ヲ', note: '「wo」讀音同 o，通常當助詞。' },
+                { r: 'n', h: 'ん', k: 'ン', note: '「n」像英文手寫的 n。' }, { empty: true }, { empty: true }, { empty: true }, { empty: true }
+            ],
+            currentMode: 'hira',
+            currentItem: null,
+
+            init() {
+                this.renderGrid();
+            },
+
+            setMode(mode) {
+                this.currentMode = mode;
+                document.getElementById('btn-mode-hira').classList.toggle('active', mode === 'hira');
+                document.getElementById('btn-mode-kata').classList.toggle('active', mode === 'kata');
+                this.renderGrid();
+            },
+
+            renderGrid() {
+                const container = document.getElementById('kana-grid');
+                container.innerHTML = '';
+                this.data.forEach(item => {
+                    const card = document.createElement('div');
+                    if (item.empty) {
+                        card.className = 'char-card empty-cell';
+                    } else {
+                        card.className = 'char-card';
+                        card.innerHTML = `<div class="char-main">${this.currentMode === 'hira' ? item.h : item.k}</div><div class="char-sub">${item.r}</div>`;
+                        card.onclick = () => this.openModal(item);
+                    }
+                    container.appendChild(card);
+                });
+            },
+
+            openModal(item) {
+                this.currentItem = item;
+                const modal = document.getElementById('kana-modal');
+                const mainChar = this.currentMode === 'hira' ? item.h : item.k;
+                document.getElementById('m-char').textContent = mainChar;
+                document.getElementById('m-romaji').textContent = item.r;
+                document.getElementById('m-note').innerHTML = `<b>💡 記憶：</b>${item.note}`;
+                
+                const img = document.getElementById('stroke-img');
+                const loader = document.getElementById('img-loader');
+                const err = document.getElementById('img-error');
+                
+                img.style.display = 'none'; 
+                loader.style.display = 'block'; 
+                err.style.display = 'none';
+                img.removeAttribute('src'); 
+                
+                this.fetchWikiImage(mainChar, this.currentMode).then(url => { img.src = url; })
+                    .catch((e) => { console.error(e); this.onImgError(); });
+                
+                modal.classList.add('open');
+            },
+
+            closeModal(e) {
+                if(e && e.target.closest('.modal-content')) return;
+                document.getElementById('kana-modal').classList.remove('open');
+                AudioManager.stopAll();
+            },
+
+            playCurrentChar() {
+                if(!this.currentItem) return;
+                const text = this.currentMode === 'hira' ? this.currentItem.h : this.currentItem.k;
+                AudioManager.play(text);
+            },
+
+            async fetchWikiImage(char, mode) {
+                const prefix = mode === 'hira' ? 'Hiragana' : 'Katakana';
+                const filename = `File:${prefix}_${char}_stroke_order_animation.gif`;
+                const params = new URLSearchParams({
+                    action: 'query', titles: filename, prop: 'imageinfo', iiprop: 'url', format: 'json', origin: '*'
+                });
+                const res = await fetch(`https://commons.wikimedia.org/w/api.php?${params.toString()}`);
+                const data = await res.json();
+                const pages = data.query.pages;
+                const pageId = Object.keys(pages)[0];
+                if(pageId === "-1") throw new Error("Image not found");
+                return pages[pageId].imageinfo[0].url;
+            },
+
+            onImgLoad() {
+                document.getElementById('img-loader').style.display = 'none';
+                document.getElementById('stroke-img').style.display = 'block';
+            },
+            onImgError() {
+                const img = document.getElementById('stroke-img');
+                if (!img.getAttribute('src')) return;
+                document.getElementById('img-loader').style.display = 'none';
+                document.getElementById('stroke-img').style.display = 'none';
+                document.getElementById('img-error').style.display = 'block';
+            }
+        };
+
+        /**
+         * =========================================================================
+         * 3. SentenceApp (句子解析邏輯)
+         * =========================================================================
+         */
+        const SentenceApp = {
+            tokenizer: null,
+            tokens: [],
+            isSequencing: false,
+            seqIndex: 0,
+            currentSeqId: 0,
+            
+            // 字典位置
+            CDN_DIC_URL: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/",
+            LOCAL_DIC_URL: "dict/",
+
+            init() {
+                this.initSmartDictionary();
+            },
+
+            async initSmartDictionary() {
+                const statusDiv = document.getElementById('dic-status');
+                
+                const protocol = window.location.protocol;
+                const isLocalFileMode = (protocol === 'file:');
+                
+                let targetPath = "";
+                let sourceName = "";
+
+                if (isLocalFileMode) {
+                    targetPath = this.CDN_DIC_URL;
+                    sourceName = "CDN";
+                } else {
+                    targetPath = this.LOCAL_DIC_URL;
+                    sourceName = "Server";
+                }
+
+                statusDiv.innerHTML = `正在測試字典: ${sourceName}...`;
+
+                const isPathOk = await this.checkPathAccessibility(targetPath);
+                
+                if (isPathOk) {
+                    this.loadKuromoji(targetPath, sourceName);
+                } else {
+                    console.warn(`Dictionary check failed for ${targetPath}`);
+                    
+                    if (!isLocalFileMode) {
+                        statusDiv.innerHTML = `<span style="color: #d32f2f;">❌ Server 字典檔遺失<br><small>Server 模式下不使用 CDN</small></span>`;
+                    } else {
+                        statusDiv.innerHTML = `<span style="color: #d32f2f;">❌ 無法連線至 CDN 字典</span>`;
+                    }
+                }
+            },
+
+            async checkPathAccessibility(baseUrl) {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000); 
+                try {
+                    const response = await fetch(baseUrl + "base.dat.gz", { method: 'HEAD', signal: controller.signal });
+                    clearTimeout(timeoutId);
+                    return response.ok;
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    return false;
+                }
+            },
+
+            loadKuromoji(path, sourceName) {
+                const statusDiv = document.getElementById('dic-status');
+                statusDiv.innerHTML = `正在下載字典 (${sourceName})...`;
+                
+                kuromoji.builder({ dicPath: path }).build((err, _tokenizer) => {
+                    if (err) {
+                        console.error(err);
+                        statusDiv.innerHTML = `<span style="color:red">字典載入失敗</span>`;
+                    } else {
+                        this.tokenizer = _tokenizer;
+                        statusDiv.innerHTML = `<span style="color:green">✅ 字典就緒 (${sourceName})</span>`;
+                        document.getElementById('btn-parse').disabled = false;
+                        document.getElementById('btn-seq').disabled = false;
+                    }
+                });
+            },
+
+            tokenize() {
+                if (!this.tokenizer) return;
+                const text = document.getElementById('input-text').value;
+                const resultDiv = document.getElementById('sentence-result');
+                resultDiv.innerHTML = '';
+                
+                const rawTokens = this.tokenizer.tokenize(text);
+                
+                rawTokens.forEach(token => {
+                    const surface = token.surface_form;
+                    const readingKata = token.reading || surface;
+                    const readingHira = readingKata.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60));
+                    const needFuri = (surface !== readingHira && surface !== readingKata);
+                    const pos = token.pos;
+
+                    const span = document.createElement('span');
+                    span.className = 'token';
+                    span.dataset.text = surface; 
+                    span.dataset.pos = pos;
+
+                    let html = needFuri ? `<ruby>${surface}<rt>${readingHira}</rt></ruby>` : surface;
+                    if(pos !== "記号" && surface.trim()) {
+                        html += `<span class="speaker-icon" onclick="event.stopPropagation(); AudioManager.play('${surface}')">🔊</span>`;
+                        span.onclick = function() { this.classList.toggle('active'); };
+                    }
+                    span.innerHTML = html;
+                    resultDiv.appendChild(span);
+                });
+                this.tokens = document.querySelectorAll('.token');
+            },
+
+            playFull() {
+                AudioManager.stopAll();
+                const text = document.getElementById('input-text').value;
+                if(!text) return;
+                document.getElementById('btn-stop').disabled = false;
+                AudioManager.play(text, () => { document.getElementById('btn-stop').disabled = true; });
+            },
+
+            playSeq() {
+                AudioManager.stopAll();
+                this.currentSeqId++; 
+                if(this.tokens.length === 0) {
+                    this.tokenize();
+                    if(this.tokens.length === 0) return;
+                }
+                this.isSequencing = true;
+                this.seqIndex = 0;
+                document.getElementById('btn-stop').disabled = false;
+                this.playNextToken(this.currentSeqId);
+            },
+
+            playNextToken(seqId) {
+                if (seqId !== this.currentSeqId) return;
+
+                if(!this.isSequencing || this.seqIndex >= this.tokens.length) {
+                    this.stopSequenceUI();
+                    return;
+                }
+                const el = this.tokens[this.seqIndex];
+                const text = el.dataset.text;
+                const pos = el.dataset.pos;
+
+                if (pos === "記号" || !text.trim()) {
+                    this.seqIndex++; 
+                    setTimeout(() => this.playNextToken(seqId), 0); 
+                    return;
+                }
+
+                el.classList.add('speaking');
+                const delay = AudioManager.isRemoteMode ? 100 : 10;
+                
+                setTimeout(() => {
+                    if(!this.isSequencing || seqId !== this.currentSeqId) {
+                         el.classList.remove('speaking'); return;
+                    }
+                    AudioManager.play(text, () => {
+                        if (seqId !== this.currentSeqId) {
+                            el.classList.remove('speaking'); return;
+                        }
+                        el.classList.remove('speaking');
+                        this.seqIndex++;
+                        const spd = parseFloat(document.getElementById('global-speed').value);
+                        const gap = AudioManager.isRemoteMode ? 200 : 50;
+                        if(this.isSequencing) {
+                            setTimeout(() => this.playNextToken(seqId), gap/spd);
+                        }
+                    });
+                }, delay);
+            },
+
+            stopSequenceUI() {
+                this.isSequencing = false;
+                this.currentSeqId++; 
+                document.querySelectorAll('.token.speaking').forEach(el => el.classList.remove('speaking'));
+                document.getElementById('btn-stop').disabled = true;
+            }
+        };
+
+        function switchTab(viewId) {
+            AudioManager.stopAll();
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.target === viewId);
+            });
+            document.querySelectorAll('.view-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            document.getElementById(viewId).classList.add('active');
+        }
+
+        AudioManager.init();
+        KanaApp.init();
+        SentenceApp.init(); 
+
+    </script>
+</body>
+</html>
