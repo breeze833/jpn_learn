@@ -4,7 +4,7 @@ const cors = require('cors');
 const app = express();
 const PORT = 3000;
 
-// 允許所有來源跨域請求 (解決前端 CORS 問題的核心)
+// Allow all corss-origin requests (eliminate CORS issue)
 app.use(cors());
 
 app.get('/tts', async (req, res) => {
@@ -14,25 +14,25 @@ app.get('/tts', async (req, res) => {
     }
 
     // Google TTS URL
-    // client=tw-ob 是 Google Translate 的公開 API 參數之一
+    // client=tw-ob is one of the Google Translate public API parameters
     const googleUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=ja&client=tw-ob&q=${encodeURIComponent(text)}`;
 
     try {
-        // 偽裝成瀏覽器發送請求 (避免被 Google 擋掉非瀏覽器的 User-Agent)
+        // pretend a browser (avoid being blocked by Google due to improper User-Agent)
         const response = await axios({
             method: 'get',
             url: googleUrl,
-            responseType: 'stream', // 重要：告訴 axios 我們要接二進位流
+            responseType: 'stream', // important: instruct axios to use binary stream
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Referer': 'https://translate.google.com/'
             }
         });
 
-        // 設定回傳標頭，告訴前端這是音訊
+        // set response header: tell the frontend that this is audio
         res.set('Content-Type', 'audio/mpeg');
         
-        // 將 Google 回傳的資料流 (Stream) 直接轉發 (Pipe) 給前端
+        // pipe the stream from Google to the frontend
         response.data.pipe(res);
 
     } catch (error) {
@@ -41,6 +41,7 @@ app.get('/tts', async (req, res) => {
     }
 });
 
+// the endpoint for checking the availability of the proxy
 app.get('/ready', (req, res) => {
 	res.end();
 });

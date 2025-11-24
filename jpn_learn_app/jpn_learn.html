@@ -8,17 +8,16 @@
     <title>日語學習助手 (50音 + 句子解析)</title>
     <script>
         if ('serviceWorker' in navigator) {
-          // 跟瀏覽器「預約」了一件事：「等一下全部載入完畢後，請叫我一聲。」
+          // register service worker only after page loaded
           window.addEventListener('load', () => {
-            // 真正執行註冊的時刻，已經是很久以後了
             navigator.serviceWorker.register('./jpn_learn_sw.js');
-            console.log('SW 註冊啟動');
+            console.log('Service Worker 註冊啟動');
           });
         }
     </script>
     <style>
         /* =========================================
-           1. 全域變數與重置
+           1. Globals
            ========================================= */
         :root {
             --primary: #2196F3;
@@ -86,12 +85,12 @@
         }
         .status-pill:hover { background: #e0e0e0; }
         
-        /* 狀態燈號 */
+        /* Status Indicator */
         .status-indicator { 
             width: 10px; height: 10px; border-radius: 50%; 
             background: #ccc; 
             box-shadow: 0 0 2px rgba(0,0,0,0.2);
-            display: none; /* 預設隱藏 */
+            display: none; /* invisible by default */
         }
         .status-indicator.visible { display: inline-block; }
         
@@ -104,7 +103,7 @@
         .speed-control { display: flex; align-items: center; gap: 5px; margin-left: 10px; border-left: 1px solid #ccc; padding-left: 10px;}
         input[type=range] { width: 80px; cursor: pointer; }
 
-        /* 導航頁籤 (Tabs) */
+        /* Tabs */
         .nav-tabs {
             display: flex;
             justify-content: center;
@@ -180,7 +179,7 @@
         }
         .close-btn { position: absolute; top: 10px; right: 15px; font-size: 1.8rem; cursor: pointer; color: #aaa; }
         
-        /* 筆順容器 */
+        /* stroke area */
         .stroke-container {
             width: 150px; height: 150px; background: #fff; border: 2px dashed #eee;
             border-radius: 8px; margin: 15px auto; position: relative; display: flex; align-items: center; justify-content: center;
@@ -189,7 +188,7 @@
         .loader { border: 3px solid #f3f3f3; border-top: 3px solid var(--primary-kana); border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; position: absolute;}
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
-        /* 錯誤訊息：確保預設隱藏 */
+        /* error message, invisible by default */
         #img-error { display: none; font-size: 0.8rem; color: #999; }
 
         .play-btn-kana {
@@ -329,22 +328,21 @@
     <script>
         /**
          * =========================================================================
-         * 1. AudioManager (核心朗讀服務)
+         * 1. AudioManager (Core Speech Service)
          * =========================================================================
          */
         const AudioManager = {
-            // 指向使用者本機的 Proxy
+            // Proxy on localhost
             PROXY_URL: "http://localhost:3000/tts",
 			PROXY_CHECK_URL: "http://localhost:3000/ready",
             
             isProxyAvailable: false,
-            // 預設先設為 false，等待偵測結果決定，避免 UI 亂跳
             isRemoteMode: false,
             localVoice: null,
             audioPlayer: document.getElementById('tts-player'),
             currentPlayId: 0,
             
-            // 🔥 新增：語音偵測的逾時鎖定，避免重複切換
+            // Timeout for voice engine check, to avoid redundant output
             voiceCheckTimeout: null,
 
             ui: {
@@ -396,20 +394,21 @@
             },
 
             init() {
-                // 1. 偵測 Proxy (延遲執行)
+                // 1. detect Proxy (delayed execution)
                 setTimeout(() => this.checkProxy(), 800);
 
-                // 2. 偵測本地語音 (Web Speech API)
-                // 註冊事件監聽器：當 Android 語音包載入完成時觸發
+                // 2. detect local speech engine (Web Speech API)
+                // register event listener: triggered when Android language pack is loaded
                 if (window.speechSynthesis.onvoiceschanged !== undefined) {
                     window.speechSynthesis.onvoiceschanged = () => this.detectLocalVoice(false);
                 }
                 
-                // 立即嘗試一次 (針對 PC)
+                // check local speech engine (for PC)
                 this.detectLocalVoice(false);
 
-                // 🔥 3. 設定「最後通牒」逾時機制 (針對 Android)
-                // 如果 2.5 秒後 onvoiceschanged 還沒觸發，或者清單還是空的，就強制判定。
+                // 3. timeout for final check (for Android)
+                // Android takes time to finish the on-demand language pack loading
+                // Wait for 2.5s and check whether the local engine is usable
                 this.voiceCheckTimeout = setTimeout(() => {
                     this.detectLocalVoice(true);
                 }, 2500);
@@ -432,35 +431,34 @@
                 }
                 this.updateUI();
             },
-
-            // 🔥 修正後的語音偵測邏輯
+            
             // forceDecision: 是否為逾時強制判定
             detectLocalVoice(forceDecision) {
                 const voices = window.speechSynthesis.getVoices();
                 
-                // 情況 A: 瀏覽器還在載入語音 (陣列為空)，且還沒到逾時時間 -> 繼續等待，不切換
+                // Case A: browser is loading language pack (empty array)，and not timeout -> keep waiting，don't switch
                 if (voices.length === 0 && !forceDecision) {
-                    // 保持現狀 (UI 顯示偵測中...)
+                    // keep current selection (UI 顯示偵測中...)
                     return;
                 }
 
-                // 情況 B: 語音清單已載入 OR 已經逾時 (必須做決定了)
+                // Case B: language pack is loaded OR timeout (have to make the decision)
                 
-                // 尋找日文語音
+                // search for the Japanese voice support
                 const jaVoice = voices.find(v => v.lang === 'ja-JP') || voices.find(v => v.lang.startsWith('ja'));
                 
                 if (jaVoice) {
-                    // ✅ 找到了！使用本地語音
+                    // ✅ Found! Use local voice engine
                     this.localVoice = jaVoice;
                     this.isRemoteMode = false;
                     
-                    // 如果這是在逾時之前發生的，記得清除逾時計時器，避免稍後重複執行
+                    // If not timeout, clear the timer (avoid unnecessary detection)
                     if (this.voiceCheckTimeout) {
                         clearTimeout(this.voiceCheckTimeout);
                         this.voiceCheckTimeout = null;
                     }
                 } else {
-                    // ❌ 找不到 (是真的沒安裝，或是逾時了還沒載入) -> 切換遠端
+                    // ❌ Not found (not available or timeout) -> switch to remote engine
                     this.localVoice = null;
                     this.isRemoteMode = true;
                 }
