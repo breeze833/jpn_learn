@@ -66,7 +66,7 @@ Stuck on how to read a long Japanese sentence? Just paste it here\!
 
 ## 🤖 About This Project
 
-This is an experimental project demonstrating a new mode of human-AI collaboration.
+This is an experimental project demonstrating a new mode of human-AI collaboration. ([Read the dev story](https://medium.com/@breeze833/pair-programming-with-ai-how-i-built-a-speaking-japanese-learning-assistant-in-20-hours-ef07a674966c))
 
 **Every single line of code** in this program was generated through "pure conversation" with **Google Gemini 3**. The development process did not rely on specialized AI coding environments (like Cursor or GitHub Copilot). Instead, it unfolded like a chat: the human proposed ideas, requirements, and high-level solutions; the AI acted as the architect and engineer. We debug, optimize, and implement features step-by-step.
 
